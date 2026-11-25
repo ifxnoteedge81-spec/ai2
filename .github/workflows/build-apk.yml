@@ -43,12 +43,23 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Install Android platform and build tools
+      # The ubuntu runner already ships the Android SDK (ANDROID_HOME). We do NOT use
+      # android-actions/setup-android: it fails with "Failed to find package 'tools'".
+      - name: Prepare Android SDK (preinstalled on the runner)
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          SDKM=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null | sort | tail -n1)
+          echo "sdkmanager: $SDKM"
+          if [ -n "$SDKM" ]; then
+            yes | "$SDKM" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
+            "$SDKM" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0" || echo "::warning::sdkmanager install failed; Gradle will try to download what it needs"
+          else
+            echo "::warning::sdkmanager not found; relying on Gradle auto-download"
+            mkdir -p "$ANDROID_HOME/licenses"
+            echo -e "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n84831b9409646a918e30573bab4c9c91346d8abd" > "$ANDROID_HOME/licenses/android-sdk-license"
+          fi
 
       # Provides a `gradle` command on PATH as a fallback when gradle-wrapper.jar is missing from the repo.
       - uses: gradle/actions/setup-gradle@v4
