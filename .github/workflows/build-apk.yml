@@ -68,19 +68,34 @@ jobs:
         with:
           gradle-version: "8.11.1"
  
-      - name: Build debug APK
+      - name: Build debug APK (self-healing, up to 4 attempts)
         working-directory: ${{ steps.proj.outputs.dir }}
         run: |
-          set -o pipefail
-          if [ -f gradlew ] && [ -f gradle/wrapper/gradle-wrapper.jar ]; then
-            chmod +x gradlew
-            GR=./gradlew
-          else
-            echo "::warning::gradle wrapper missing, using Gradle 8.11.1 from PATH"
-            GR=gradle
+          : > "$GITHUB_WORKSPACE/build.log"
+          VER="-PversionName=0.1.${{ github.run_number }} -PversionCode=${{ github.run_number }}"
+          chmod +x gradlew 2>/dev/null || true
+          if [ -f gradlew ] && [ -f gradle/wrapper/gradle-wrapper.jar ]; then GR=./gradlew; else echo "::warning::wrapper missing, using system Gradle"; GR=gradle; fi
+ 
+          attempt() {
+            echo "=================== ATTEMPT $1: $2 ===================" | tee -a "$GITHUB_WORKSPACE/build.log"
+            shift 2
+            set +e
+            "$@" 2>&1 | tee -a "$GITHUB_WORKSPACE/build.log"
+            local rc=${PIPESTATUS[0]}
+            set -e
+            return $rc
+          }
+          found() { find . -path '*outputs/apk/debug/*.apk' -size +100k | grep -q .; }
+ 
+          attempt 1 "normal build" $GR --no-daemon --console=plain assembleDebug $VER && found && exit 0
+          [ "$GR" = "./gradlew" ] || true
+          attempt 2 "refresh dependencies, no cache" $GR --no-daemon --console=plain --refresh-dependencies --no-build-cache assembleDebug $VER && found && exit 0
+          attempt 3 "clean, single worker, low memory" env GRADLE_OPTS="-Xmx2g" $GR --no-daemon --console=plain --no-build-cache --max-workers=1 -Dorg.gradle.jvmargs=-Xmx2g clean assembleDebug $VER && found && exit 0
+          if [ "$GR" = "./gradlew" ]; then
+            attempt 4 "system Gradle 8.11.1 instead of the wrapper" gradle --no-daemon --console=plain --no-build-cache assembleDebug $VER && found && exit 0
           fi
-          $GR --no-daemon --console=plain assembleDebug \
-            -PversionName=0.1.${{ github.run_number }} -PversionCode=${{ github.run_number }} 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          echo "::error::All build attempts failed. See the error summary below."
+          exit 1
  
       - name: Show the REAL error (only runs when the build failed)
         if: failure()
