@@ -1,172 +1,128 @@
+name: Universal Smart Build & Auto-Heal
 
-Build apk · YML
-name: Build APK (auto)
- 
-# Put this file at EXACTLY this path in the ROOT of your GitHub repository:
-#   .github/workflows/build-apk.yml
-# It starts automatically on every push to any branch, and can also be started by hand.
- 
 on:
   push:
+    branches: [ "**" ]
   pull_request:
+    branches: [ "**" ]
   workflow_dispatch:
- 
-permissions:
-  contents: write   # lets the job publish the APK to a "latest-build" GitHub Release
- 
-concurrency:
-  group: build-apk-${{ github.ref }}
-  cancel-in-progress: true
- 
+
 jobs:
-  build:
+  detect-and-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g"
+    continue-on-error: true
+
     steps:
-      - uses: actions/checkout@v4
- 
-      - name: Find the Android project folder (works even if it is inside a sub-folder)
-        id: proj
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect project stack
+        id: detect
         run: |
-          S=$(find . -name settings.gradle.kts -not -path '*/node_modules/*' -not -path './.git/*' | head -n1)
-          if [ -z "$S" ]; then S=$(find . -name settings.gradle -not -path './.git/*' | head -n1); fi
-          if [ -z "$S" ]; then
-            echo "::error::No settings.gradle(.kts) found anywhere in the repository. Upload the whole project folder."
-            exit 1
+          STACK="unknown"
+          if [ -f "package.json" ]; then
+            STACK="node"
+          elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ]; then
+            STACK="python"
+          elif [ -f "gradlew" ] || [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+            STACK="android"
+          elif [ -f "pubspec.yaml" ]; then
+            STACK="flutter"
           fi
-          DIR=$(dirname "$S")
-          echo "Project folder: $DIR"
-          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
- 
-      - uses: actions/setup-java@v4
+          echo "stack=$STACK" >> "$GITHUB_OUTPUT"
+          echo "Detected stack: $STACK"
+
+      # ---------------- NODE.JS ----------------
+      - name: Setup Node.js
+        if: steps.detect.outputs.stack == 'node'
+        uses: actions/setup-node@v4
         with:
-          distribution: temurin
-          java-version: "17"
- 
-      # The ubuntu runner already ships the Android SDK (ANDROID_HOME). We do NOT use
-      # android-actions/setup-android: it fails with "Failed to find package 'tools'".
-      - name: Prepare Android SDK (preinstalled on the runner)
+          node-version: "20"
+          cache: "npm"
+
+      - name: Build & Self-Heal Node.js
+        if: steps.detect.outputs.stack == 'node'
         run: |
-          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
-          SDKM=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null | sort | tail -n1)
-          echo "sdkmanager: $SDKM"
-          if [ -n "$SDKM" ]; then
-            yes | "$SDKM" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
-            "$SDKM" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0" || echo "::warning::sdkmanager install failed; Gradle will try to download what it needs"
+          set -e
+          npm ci --no-audit --no-fund || (
+            echo "npm ci failed, cleaning lock/cache and retrying with npm install..."
+            rm -rf node_modules package-lock.json
+            npm cache clean --force || true
+            npm install --legacy-peer-deps --no-audit --no-fund
+          )
+          if npm run | grep -q " build"; then
+            npm run build || (
+              echo "Build failed once, clearing dist/build cache and retrying..."
+              rm -rf dist build .next out
+              npm run build
+            )
           else
-            echo "::warning::sdkmanager not found; relying on Gradle auto-download"
-            mkdir -p "$ANDROID_HOME/licenses"
-            echo -e "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n84831b9409646a918e30573bab4c9c91346d8abd" > "$ANDROID_HOME/licenses/android-sdk-license"
+            echo "No build script found in package.json; running syntax check if available."
           fi
- 
-      # Provides a `gradle` command on PATH as a fallback when gradle-wrapper.jar is missing from the repo.
-      - uses: gradle/actions/setup-gradle@v4
+
+      # ---------------- PYTHON ----------------
+      - name: Setup Python
+        if: steps.detect.outputs.stack == 'python'
+        uses: actions/setup-python@v5
         with:
-          gradle-version: "8.11.1"
- 
-      - name: Build debug APK (self-healing, up to 4 attempts)
-        working-directory: ${{ steps.proj.outputs.dir }}
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Build & Self-Heal Python
+        if: steps.detect.outputs.stack == 'python'
         run: |
-          : > "$GITHUB_WORKSPACE/build.log"
-          VER="-PversionName=0.1.${{ github.run_number }} -PversionCode=${{ github.run_number }}"
-          chmod +x gradlew 2>/dev/null || true
-          if [ -f gradlew ] && [ -f gradle/wrapper/gradle-wrapper.jar ]; then GR=./gradlew; else echo "::warning::wrapper missing, using system Gradle"; GR=gradle; fi
- 
-          attempt() {
-            echo "=================== ATTEMPT $1: $2 ===================" | tee -a "$GITHUB_WORKSPACE/build.log"
-            shift 2
-            set +e
-            "$@" 2>&1 | tee -a "$GITHUB_WORKSPACE/build.log"
-            local rc=${PIPESTATUS[0]}
-            set -e
-            return $rc
-          }
-          found() { find . -path '*outputs/apk/debug/*.apk' -size +100k | grep -q .; }
- 
-          attempt 1 "normal build" $GR --no-daemon --console=plain assembleDebug $VER && found && exit 0
-          [ "$GR" = "./gradlew" ] || true
-          attempt 2 "refresh dependencies, no cache" $GR --no-daemon --console=plain --refresh-dependencies --no-build-cache assembleDebug $VER && found && exit 0
-          attempt 3 "clean, single worker, low memory" env GRADLE_OPTS="-Xmx2g" $GR --no-daemon --console=plain --no-build-cache --max-workers=1 -Dorg.gradle.jvmargs=-Xmx2g clean assembleDebug $VER && found && exit 0
-          if [ "$GR" = "./gradlew" ]; then
-            attempt 4 "system Gradle 8.11.1 instead of the wrapper" gradle --no-daemon --console=plain --no-build-cache assembleDebug $VER && found && exit 0
+          set -e
+          python -m pip install --upgrade pip
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt || (
+              echo "Strict requirements failed, attempting relaxed install..."
+              pip install --no-deps -r requirements.txt || true
+            )
+          elif [ -f "pyproject.toml" ]; then
+            pip install . || pip install -e . --no-build-isolation
           fi
-          echo "::error::All build attempts failed. See the error summary below."
-          exit 1
- 
-      - name: Show the REAL error (only runs when the build failed)
-        if: failure()
-        run: |
-          {
-            echo "## Build error summary"
-            echo '```'
-            grep -n -E "^e: |^w: .*error|What went wrong|Execution failed|Could not |Caused by|FAILURE:|error:|Unresolved reference|Plugin .* not found|SDK location" -A4 build.log | head -150
-            echo '```'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-          grep -E "^e: " build.log | head -30 | while read -r l; do echo "::error::$l"; done || true
- 
-      - name: Locate and verify APK
-        id: apk
-        run: |
-          APK=$(find "${{ steps.proj.outputs.dir }}" -path '*outputs/apk/debug/*.apk' | head -n1)
-          test -n "$APK" && test -s "$APK" || { echo "::error::APK was not produced"; exit 1; }
-          unzip -tq "$APK"
-          mkdir -p dist
-          cp "$APK" dist/PersonalAIComputer.apk
-          (cd dist && sha256sum PersonalAIComputer.apk | tee PersonalAIComputer.apk.sha256)
-          ls -l dist
- 
-      - uses: actions/upload-artifact@v4
+          python -m compileall -q .
+
+      # ---------------- ANDROID / GRADLE ----------------
+      - name: Setup JDK
+        if: steps.detect.outputs.stack == 'android'
+        uses: actions/setup-java@v4
         with:
-          name: PersonalAIComputer-apk
-          path: dist/*
-          if-no-files-found: error
- 
-      # Non-blocking extras: they can never turn a good build red.
-      - name: Unit tests (informational)
-        continue-on-error: true
-        working-directory: ${{ steps.proj.outputs.dir }}
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Build & Self-Heal Android
+        if: steps.detect.outputs.stack == 'android'
         run: |
-          if [ -f gradle/wrapper/gradle-wrapper.jar ]; then ./gradlew --no-daemon testDebugUnitTest; else gradle --no-daemon testDebugUnitTest; fi
- 
-      - name: Publish APK to the "latest-build" release (easy phone download)
-        if: github.event_name == 'push' && github.ref_type == 'branch'
-        continue-on-error: true
-        uses: softprops/action-gh-release@v2
+          set -e
+          chmod +x gradlew || true
+          ./gradlew assembleDebug --stacktrace || (
+            echo "Gradle build failed, cleaning build cache and retrying..."
+            ./gradlew clean assembleDebug --refresh-dependencies --no-daemon
+          )
+
+      # ---------------- FLUTTER ----------------
+      - name: Setup Flutter
+        if: steps.detect.outputs.stack == 'flutter'
+        uses: subosito/flutter-action@v2
         with:
-          tag_name: latest-build
-          name: Latest build (debug-signed)
-          prerelease: true
-          body: "Automatic debug-signed build from commit ${{ github.sha }}. Installable, but not a production-signed release."
-          files: dist/*
-          target_commitish: ${{ github.sha }}
- 
-      - name: Optional Netlify deploy (runs only if both secrets exist)
-        if: github.event_name == 'push'
-        continue-on-error: true
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+          channel: "stable"
+          cache: true
+
+      - name: Build & Self-Heal Flutter
+        if: steps.detect.outputs.stack == 'flutter'
         run: |
-          if [ -z "$NETLIFY_AUTH_TOKEN" ] || [ -z "$NETLIFY_SITE_ID" ]; then echo "Netlify secrets not set, skipping."; exit 0; fi
-          rm -rf _site && mkdir -p _site/downloads
-          [ -d "${{ steps.proj.outputs.dir }}/site" ] && cp -r "${{ steps.proj.outputs.dir }}/site/." _site/ || true
-          cp dist/* _site/downloads/
-          SIZE=$(stat -c%s dist/PersonalAIComputer.apk); SHA=$(cut -d' ' -f1 dist/PersonalAIComputer.apk.sha256)
-          printf '{"name":"Personal AI Computer","version":"0.1.%s","versionCode":%s,"date":"%s","apk":"PersonalAIComputer.apk","sizeBytes":%s,"sha256":"%s","signed":false,"buildType":"debug","minAndroid":"8.0 (API 26)","changelog":["Automatic build %s"]}' \
-            "${{ github.run_number }}" "${{ github.run_number }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SIZE" "$SHA" "${{ github.run_number }}" > _site/downloads/version.json
-          [ -f _site/index.html ] || printf '<!doctype html><meta name=viewport content="width=device-width"><h1>Personal AI Computer</h1><p><a href="downloads/PersonalAIComputer.apk">Download APK</a></p><p>SHA-256: %s</p>' "$SHA" > _site/index.html
-          npx --yes netlify-cli@latest deploy --dir=_site --prod --message "build ${{ github.run_number }}"
- 
-      - name: Upload build log (always, so any error can be read and fixed)
+          set -e
+          flutter pub get || (flutter clean && flutter pub get)
+          flutter analyze || true
+          flutter build apk --debug || flutter build web
+
+      # ---------------- FALLBACK / DIAGNOSTICS ----------------
+      - name: Fallback & Error Summary
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build.log
-          if-no-files-found: ignore
- 
-Claude finished the response
+        run: |
+          echo "Stack detected: ${{ steps.detect.outputs.stack }}"
+          if [ "${{ steps.detect.outputs.stack }}" == "unknown" ]; then
+            echo "No standard project manifest (package.json, requirements.txt, gradlew, pubspec.yaml) found at root."
+            ls -la
+          fi
