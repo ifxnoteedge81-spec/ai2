@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PERSONAL AI COMPUTER – Download</title>
+  <meta name="description" content="Local-first autonomous AI agent for Android.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <svg class="logo" viewBox="0 0 108 108" aria-hidden="true">
+        <rect width="108" height="108" rx="24" fill="#0B0F14"/>
+        <path d="M30,34 L78,34 L78,66 L30,66 Z" fill="none" stroke="#4DD0E1" stroke-width="4"/>
+        <path d="M48,70 L60,70 L60,74 L66,74 L66,78 L42,78 L42,74 L48,74 Z" fill="#4DD0E1"/>
+        <path d="M39,43 L47,50 L39,57" fill="none" stroke="#B388FF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M53,57 L67,57" fill="none" stroke="#B388FF" stroke-width="4" stroke-linecap="round"/>
+      </svg>
+      <h1>PERSONAL AI COMPUTER</h1>
+      <p>A local-first autonomous AI agent for Android: it plans, uses real tools (files, shell, browser, device control), asks before sensitive steps, and reports only what it verified. AI requests go directly from your phone to Gemini or OpenRouter with your own keys; there is no backend server.</p>
+    </header>
+
+    <section class="card" id="download">
+      <h2>Latest build</h2>
+      <div id="status" class="notice">Loading build information…</div>
+      <dl id="meta" hidden>
+        <dt>Version</dt><dd id="version"></dd>
+        <dt>Released</dt><dd id="date"></dd>
+        <dt>File size</dt><dd id="size"></dd>
+        <dt>Build</dt><dd id="build"></dd>
+        <dt>Minimum Android</dt><dd id="minAndroid"></dd>
+        <dt>SHA-256</dt><dd><code id="sha"></code></dd>
+      </dl>
+      <a id="dl" class="button disabled" aria-disabled="true">Download APK</a>
+    </section>
+
+    <section class="card">
+      <h2>Install</h2>
+      <ol>
+        <li>Download the APK on your Android phone (Android 8.0 or newer).</li>
+        <li>Optional: verify the SHA-256 above (for example with a checksum app) to make sure the file is intact.</li>
+        <li>Open the file. Android will ask you to allow installs from your browser or file manager; allow it for this one install.</li>
+        <li>Open the app, go to <b>AI Model Settings</b>, and add your own Gemini or OpenRouter API key.</li>
+        <li>To let the agent operate other apps, enable <b>Virtual Hands</b> in Android Accessibility settings (on Android 13+ you may first need App info &rarr; ⋮ &rarr; Allow restricted settings).</li>
+      </ol>
+      <p class="muted">A build marked "debug" is signed with a debug key because the project owner has not configured release-signing secrets yet. It works, but it is not a production-signed release.</p>
+    </section>
+
+    <section class="card">
+      <h2>Changelog</h2>
+      <ul id="changelog"><li class="muted">Not available yet.</li></ul>
+    </section>
+
+    <footer class="muted">
+      Support: <span id="support">add your contact link here</span> · Source: <span id="source">add your GitHub repository link here</span>
+    </footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

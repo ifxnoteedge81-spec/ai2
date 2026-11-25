@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Personal AI Computer</string>
+    <string name="accessibility_service_label">Personal AI Computer – Virtual Hands</string>
+    <string name="accessibility_service_description">Lets the Personal AI Computer agent read the screen and perform taps, swipes, scrolling and typing, only while you have started an agent task and approved device control. It never enters passwords, OTPs or CAPTCHAs and is blocked in banking, password-manager and system-settings apps.</string>
+    <string name="agent_channel_name">Agent tasks</string>
+    <string name="agent_notification_title">Personal AI Computer is working</string>
+    <string name="agent_notification_text">An agent task is running. Open the app to pause or stop it.</string>
+</resources>
